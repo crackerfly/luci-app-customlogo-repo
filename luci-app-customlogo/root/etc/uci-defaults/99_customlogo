@@ -1,0 +1,5 @@
+#!/bin/sh
+chmod +x /etc/init.d/customlogo
+/etc/init.d/customlogo enable
+/etc/init.d/customlogo start
+exit 0

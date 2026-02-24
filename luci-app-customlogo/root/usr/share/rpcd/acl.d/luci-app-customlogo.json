@@ -1,0 +1,17 @@
+{
+	"luci-app-customlogo": {
+		"description": "Grant access to Custom Logo configuration",
+		"read": {
+			"uci": [ "customlogo" ],
+			"file": {
+				"/etc/customlogo/*": [ "read" ]
+			}
+		},
+		"write": {
+			"uci": [ "customlogo" ],
+			"file": {
+				"/etc/customlogo/*": [ "write", "delete" ]
+			}
+		}
+	}
+}

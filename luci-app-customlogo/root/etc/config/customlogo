@@ -1,0 +1,4 @@
+config customlogo 'main'
+    option enable '0'
+    option favicon ''
+    option logo ''

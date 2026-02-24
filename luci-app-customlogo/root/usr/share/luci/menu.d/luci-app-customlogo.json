@@ -1,0 +1,13 @@
+{
+	"admin/services/customlogo": {
+		"title": "Custom Logo",
+		"icon": "sysauth",
+		"action": {
+			"type": "view",
+			"path": "customlogo/setting"
+		},
+		"depends": {
+			"acl": [ "luci-app-customlogo" ]
+		}
+	}
+}

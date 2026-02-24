@@ -1,0 +1,81 @@
+#!/bin/sh /etc/rc.common
+
+START=99
+USE_PROCD=1
+
+# 主题相关路径定义
+FAVICON_PATH="/www/favicon.ico"
+BOOTSTRAP_LOGO="/www/luci-static/bootstrap/logo.png"
+ARGON_LOGO="/www/luci-static/argon/img/logo.png"
+BACKUP_SUFFIX=".backup"
+
+apply_logos() {
+    local enable
+    local favicon
+    local logo
+
+    config_load customlogo
+    config_get enable main enable "0"
+    config_get favicon main favicon ""
+    config_get logo main logo ""
+
+    # 创建备份函数
+    backup_file() {
+        local file=$1
+        if [ -f "$file" ] && [ ! -f "${file}${BACKUP_SUFFIX}" ]; then
+            cp "$file" "${file}${BACKUP_SUFFIX}"
+        fi
+    }
+
+    restore_file() {
+        local file=$1
+        if [ -f "${file}${BACKUP_SUFFIX}" ]; then
+            cp "${file}${BACKUP_SUFFIX}" "$file"
+        fi
+    }
+
+    if [ "$enable" = "1" ]; then
+        # 1. 处理 Favicon
+        if [ -n "$favicon" ] && [ -f "$favicon" ]; then
+            backup_file "$FAVICON_PATH"
+            cp "$favicon" "$FAVICON_PATH"
+        fi
+
+        # 2. 处理 Logo (兼容主流主题)
+        if [ -n "$logo" ] && [ -f "$logo" ]; then
+            # Bootstrap 主题
+            if [ -d "/www/luci-static/bootstrap" ]; then
+                backup_file "$BOOTSTRAP_LOGO"
+                cp "$logo" "$BOOTSTRAP_LOGO"
+            fi
+            # Argon 主题
+            if [ -d "/www/luci-static/argon" ]; then
+                backup_file "$ARGON_LOGO"
+                cp "$logo" "$ARGON_LOGO"
+                # Argon 有时需要覆盖 svg
+                [ -f "/www/luci-static/argon/img/logo.svg" ] && backup_file "/www/luci-static/argon/img/logo.svg" && cp "$logo" "/www/luci-static/argon/img/logo.svg"
+            fi
+        fi
+    else
+        # 如果禁用，则恢复原生文件
+        restore_file "$FAVICON_PATH"
+        restore_file "$BOOTSTRAP_LOGO"
+        restore_file "$ARGON_LOGO"
+        restore_file "/www/luci-static/argon/img/logo.svg"
+    fi
+}
+
+start_service() {
+    # 确保上传目录存在
+    mkdir -p /etc/customlogo
+    apply_logos
+}
+
+service_triggers() {
+    # 当界面的 customlogo uci 被保存时，触发此脚本
+    procd_add_reload_trigger "customlogo"
+}
+
+reload_service() {
+    apply_logos
+}
