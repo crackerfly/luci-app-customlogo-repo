@@ -87,10 +87,10 @@ header .brand {
     display: flex !important;
     align-items: center !important;
     
-    /* 需求2: 左侧保留 15px 留白 (覆盖官方的负 margin)，并释放宽度限制 */
+    /* 需求2: 修正左侧保留 -15px 留白 (覆盖官方的负 margin)，并释放宽度限制 */
     margin-left: 0 !important;
-    padding-left: 15px !important;
-    padding-right: 15px !important;
+    padding-left: 0 !important;
+    padding-right: 12px !important;
     padding-top: 0 !important;
     padding-bottom: 0 !important;
     min-width: auto !important;
