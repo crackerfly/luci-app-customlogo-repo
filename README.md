@@ -4,7 +4,7 @@ A lightweight Web UI customization plugin designed for **OpenWrt 24.10 (LuCI2 JS
 
 ---
 
-## 📝 许可证 / License
+## License
 
 [MIT License](https://www.google.com/search?q=LICENSE)
 
