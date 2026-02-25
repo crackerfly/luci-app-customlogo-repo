@@ -13,20 +13,20 @@ return view.extend({
 	render: function() {
 		var m, s, o;
 
-		m = new form.Map('customlogo', _('自定义 Logo (Custom Logo)'),
-			_('在这里上传并替换 OpenWrt Web UI 的网页图标 (Favicon) 和左上角 Logo。支持 PNG 和 SVG 格式。'));
+		m = new form.Map('customlogo', _('Custom Logo'),
+			_('Upload and replace the OpenWrt Web UI Favicon and top-left Logo here. PNG and SVG formats are supported.'));
 
-		s = m.section(form.TypedSection, 'customlogo', _('基本设置'));
+		s = m.section(form.TypedSection, 'customlogo', _('Basic Settings'));
 		s.anonymous = true;
 
-		o = s.option(form.Flag, 'enable', _('启用自定义 Logo'));
+		o = s.option(form.Flag, 'enable', _('Enable Custom Logo'));
 		o.rmempty = false;
 
-		o = s.option(form.FileUpload, 'favicon', _('网页图标 (Favicon)'), _('建议尺寸 32x32 或 64x64 的 PNG/ICO/SVG 文件。'));
+		o = s.option(form.FileUpload, 'favicon', _('Web Icon (Favicon)'), _('Recommended size: 32x32 or 64x64. PNG, ICO, or SVG files are supported.'));
 		o.root_directory = '/etc/customlogo';
 		o.depends('enable', '1');
 
-		o = s.option(form.FileUpload, 'logo', _('导航栏 Logo'), _('显示在左上角的主题 Logo。建议高度约 40px 的 PNG 或 SVG 文件。'));
+		o = s.option(form.FileUpload, 'logo', _('Navigation Bar Logo'), _('The theme logo displayed in the top left corner. Recommended height: ~40px. PNG or SVG files are supported.'));
 		o.root_directory = '/etc/customlogo';
 		o.depends('enable', '1');
 
