@@ -24,10 +24,12 @@ return view.extend({
 
 		o = s.option(form.FileUpload, 'favicon', _('Web Icon (Favicon)'), _('Recommended size: 32x32 or 64x64. PNG, ICO, or SVG files are supported.'));
 		o.root_directory = '/etc/customlogo';
+		o.rmempty = true; // 强制允许单独为空
 		o.depends('enable', '1');
 
 		o = s.option(form.FileUpload, 'logo', _('Navigation Bar Logo'), _('The theme logo displayed in the top left corner. Recommended height: ~40px. PNG or SVG files are supported.'));
 		o.root_directory = '/etc/customlogo';
+		o.rmempty = true; // 强制允许单独为空
 		o.depends('enable', '1');
 
 		return m.render();
