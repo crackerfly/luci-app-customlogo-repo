@@ -29,7 +29,7 @@ apply_logos() {
     config_get favicon main favicon ""
     config_get logo main logo ""
 
-    # 1. 绝对安全的全局还原
+    # 1. 绝对安全的全局还原 (清除所有主题的修改痕迹)
     restore_file "/www/favicon.ico"
     restore_file "/www/luci-static/bootstrap/logo.svg"
     restore_file "/www/luci-static/bootstrap/logo_48.png"
@@ -38,14 +38,14 @@ apply_logos() {
     restore_file "/www/luci-static/argon/img/logo.svg"
     restore_file "/www/luci-static/argon/img/logo-dark.svg"
 
-    # 安全清理 CSS
+    # 安全清理 CSS 注入痕迹
     css_file="/www/luci-static/bootstrap/cascade.css"
     if [ -f "$css_file" ]; then
         sed -i '/\/\* CUSTOM_LOGO_START \*\//,/\/\* CUSTOM_LOGO_END \*\//d' "$css_file" 2>/dev/null || true
     fi
     rm -f /www/luci-static/bootstrap/custom_injected_logo.* 2>/dev/null || true
 
-    # 2. 只有启用状态才叠加新文件 (解耦 Favicon 和 Logo 的处理逻辑)
+    # 2. 只有启用状态才叠加新文件
     if [ "$enable" = "1" ]; then
         # 确保目录和文件权限
         if [ -d "/etc/customlogo" ]; then
@@ -65,37 +65,58 @@ apply_logos() {
             if [ -f "$logo" ]; then
                 ext="${logo##*.}"
                 
-                # Bootstrap 适配
+                # Bootstrap 适配 (图文并排、等比缩放、Flexbox 布局)
                 if [ -d "/www/luci-static/bootstrap" ]; then
                     backup_file "/www/luci-static/bootstrap/logo.svg"
                     backup_file "/www/luci-static/bootstrap/logo_48.png"
                     backup_file "/www/luci-static/bootstrap/cascade.css"
                     
+                    # 覆盖基础物理文件
                     cp -f "$logo" "/www/luci-static/bootstrap/logo.svg" 2>/dev/null || true
                     cp -f "$logo" "/www/luci-static/bootstrap/logo_48.png" 2>/dev/null || true
                     
+                    # 生成用于 CSS 的注入图片
                     injected_file="custom_injected_logo.$ext"
                     cp -f "$logo" "/www/luci-static/bootstrap/$injected_file" 2>/dev/null || true
                     
+                    # 注入增强版 CSS
                     cat >> "$css_file" <<EOF
 /* CUSTOM_LOGO_START */
 header .brand {
-    font-size: 0 !important;
-    color: transparent !important;
-    text-shadow: none !important;
-    background-image: url('$injected_file') !important;
-    background-size: contain !important;
-    background-repeat: no-repeat !important;
-    background-position: left center !important;
-    min-width: 150px !important;
-    padding-top: 8px !important;
-    padding-bottom: 12px !important;
+    /* 启用 Flex 布局实现完美的垂直居中和宽度自适应 */
+    display: flex !important;
+    align-items: center !important;
+    
+    /* 需求2: 左侧保留 15px 留白 (覆盖官方的负 margin)，并释放宽度限制 */
+    margin-left: 0 !important;
+    padding-left: 15px !important;
+    padding-right: 15px !important;
+    padding-top: 0 !important;
+    padding-bottom: 0 !important;
+    min-width: auto !important;
+    width: auto !important;
+    height: 40px !important;
+    
+    /* 需求1: 恢复原生文字的显示 */
+    font-size: 20px !important;
+    color: #fff !important;
+    background-image: none !important;
+}
+
+/* 需求1 & 3: 使用伪元素在文字前插入图片，并限制 28px 高度等比缩放 */
+header .brand::before {
+    content: url('$injected_file') !important;
+    display: block !important;
+    height: 28px !important;
+    width: auto !important;
+    object-fit: contain !important;
+    margin-right: 8px !important; /* 图标与右侧文字的间距 */
 }
 /* CUSTOM_LOGO_END */
 EOF
                 fi
                 
-                # Argon 适配
+                # Argon 主题适配 (Argon 原生就是纯图片 Logo，直接替换物理文件即可)
                 if [ -d "/www/luci-static/argon" ]; then
                     backup_file "/www/luci-static/argon/img/logo.png"
                     backup_file "/www/luci-static/argon/img/logo.svg"
@@ -120,6 +141,7 @@ EOF
     
     if [ -d "/www/luci-static/bootstrap" ]; then
         chmod 644 /www/luci-static/bootstrap/* 2>/dev/null || true
+        # 销毁压缩缓存，强制浏览器拉取最新 CSS
         rm -f "/www/luci-static/bootstrap/cascade.css.gz" 2>/dev/null || true
         rm -f "/www/luci-static/bootstrap/cascade.css.br" 2>/dev/null || true
     fi
