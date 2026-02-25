@@ -19,44 +19,6 @@ restore_file() {
     fi
 }
 
-# 针对纯文本主题的 CSS 注入魔法 (完美适配官方 Bootstrap 边距)
-inject_bootstrap_css() {
-    local css_file="/www/luci-static/bootstrap/cascade.css"
-    if [ -f "$css_file" ]; then
-        # 先清理之前可能注入过的代码，防止重复
-        sed -i '/\/\* CUSTOM_LOGO_START \*\//,/\/\* CUSTOM_LOGO_END \*\//d' "$css_file" 2>/dev/null
-        
-        # 注入精准定位的样式，隐藏原生文字并显示图片
-        cat >> "$css_file" <<EOF
-/* CUSTOM_LOGO_START */
-header .brand {
-    font-size: 0 !important;
-    color: transparent !important;
-    text-shadow: none !important;
-    background-image: url('custom_injected_logo.png') !important;
-    background-size: contain !important;
-    background-repeat: no-repeat !important;
-    background-position: left center !important;
-    min-width: 150px !important;
-    /* 保留官方原版的 padding 设定，确保上下完美居中 */
-    padding-top: 8px !important;
-    padding-bottom: 12px !important;
-}
-/* CUSTOM_LOGO_END */
-EOF
-        # 【核心步骤】必须删除预编译的压缩缓存，强制 Web 服务器下发最新修改的 CSS
-        rm -f "${css_file}.gz" "${css_file}.br" 2>/dev/null
-    fi
-}
-
-remove_bootstrap_css() {
-    local css_file="/www/luci-static/bootstrap/cascade.css"
-    if [ -f "$css_file" ]; then
-        sed -i '/\/\* CUSTOM_LOGO_START \*\//,/\/\* CUSTOM_LOGO_END \*\//d' "$css_file" 2>/dev/null
-        rm -f "${css_file}.gz" "${css_file}.br" 2>/dev/null
-    fi
-}
-
 apply_logos() {
     local enable
     local favicon
@@ -67,39 +29,70 @@ apply_logos() {
     config_get favicon main favicon ""
     config_get logo main logo ""
 
+    # 1. 【重构核心】无论当前什么状态，先执行全局“大扫除”，恢复到最纯净的原生状态
+    restore_file "/www/favicon.ico"
+    restore_file "/www/luci-static/bootstrap/logo.svg"
+    restore_file "/www/luci-static/bootstrap/logo_48.png"
+    restore_file "/www/luci-static/bootstrap/cascade.css"
+    restore_file "/www/luci-static/argon/img/logo.png"
+    restore_file "/www/luci-static/argon/img/logo.svg"
+    restore_file "/www/luci-static/argon/img/logo-dark.svg"
+
+    # 安全地清理掉任何 CSS 注入残留和之前生成的背景图片
+    if [ -f "/www/luci-static/bootstrap/cascade.css" ]; then
+        sed -i '/\/\* CUSTOM_LOGO_START \*\//,/\/\* CUSTOM_LOGO_END \*\//d' "/www/luci-static/bootstrap/cascade.css" 2>/dev/null
+    fi
+    rm -f /www/luci-static/bootstrap/custom_injected_logo.* 2>/dev/null
+
+    # 2. 如果启用了插件，则在纯净的基础上叠加用户的自定义文件
     if [ "$enable" = "1" ]; then
-        # 修复权限，确保 Web 服务器能读取上传的文件
+        # 确保 Web 服务器能读取用户上传到 /etc 目录的文件
         chmod 644 /etc/customlogo/* 2>/dev/null
 
-        # 1. 处理全局 Favicon
+        # 处理 Favicon
         if [ -n "$favicon" ] && [ -f "$favicon" ]; then
             backup_file "/www/favicon.ico"
-            cp "$favicon" "/www/favicon.ico"
-            chmod 644 "/www/favicon.ico"
+            cp "$favicon" "/www/favicon.ico" 2>/dev/null
         fi
 
-        # 2. 处理各主题的 Logo
+        # 处理 Logo
         if [ -n "$logo" ] && [ -f "$logo" ]; then
-            # Bootstrap 主题处理
+            # 动态获取真实的扩展名 (比如 png, svg, ico)
+            local ext="${logo##*.}"
+            
+            # Bootstrap 主题适配
             if [ -d "/www/luci-static/bootstrap" ]; then
                 backup_file "/www/luci-static/bootstrap/logo.svg"
                 backup_file "/www/luci-static/bootstrap/logo_48.png"
                 backup_file "/www/luci-static/bootstrap/cascade.css"
                 
-                # 替换物理文件 (用于登录页等需要原文件的地方)
                 cp "$logo" "/www/luci-static/bootstrap/logo.svg" 2>/dev/null
                 cp "$logo" "/www/luci-static/bootstrap/logo_48.png" 2>/dev/null
                 
-                # 复制一份专属图片用于 CSS 背景，避免格式冲突和被缓存
-                cp "$logo" "/www/luci-static/bootstrap/custom_injected_logo.png" 2>/dev/null
+                # 复制为带真实后缀的专用注入图片
+                local injected_file="custom_injected_logo.$ext"
+                cp "$logo" "/www/luci-static/bootstrap/$injected_file" 2>/dev/null
                 
-                chmod 644 /www/luci-static/bootstrap/* 2>/dev/null
-                
-                # 注入 CSS 隐藏文字并显示图片
-                inject_bootstrap_css
+                local css_file="/www/luci-static/bootstrap/cascade.css"
+                cat >> "$css_file" <<EOF
+/* CUSTOM_LOGO_START */
+header .brand {
+    font-size: 0 !important;
+    color: transparent !important;
+    text-shadow: none !important;
+    background-image: url('$injected_file') !important;
+    background-size: contain !important;
+    background-repeat: no-repeat !important;
+    background-position: left center !important;
+    min-width: 150px !important;
+    padding-top: 8px !important;
+    padding-bottom: 12px !important;
+}
+/* CUSTOM_LOGO_END */
+EOF
             fi
             
-            # Argon 主题处理 (直接替换图片即可)
+            # Argon 主题适配
             if [ -d "/www/luci-static/argon" ]; then
                 backup_file "/www/luci-static/argon/img/logo.png"
                 backup_file "/www/luci-static/argon/img/logo.svg"
@@ -108,24 +101,21 @@ apply_logos() {
                 cp "$logo" "/www/luci-static/argon/img/logo.png" 2>/dev/null
                 cp "$logo" "/www/luci-static/argon/img/logo.svg" 2>/dev/null
                 cp "$logo" "/www/luci-static/argon/img/logo-dark.svg" 2>/dev/null
-                chmod 644 /www/luci-static/argon/img/logo* 2>/dev/null
             fi
         fi
-    else
-        # --- 禁用时的恢复逻辑 ---
-        restore_file "/www/favicon.ico"
+    fi
+
+    # 3. 【最重要的一步】全局权限护城河与缓存销毁
+    [ -f "/www/favicon.ico" ] && chmod 644 "/www/favicon.ico" 2>/dev/null
+    [ -d "/www/luci-static/argon" ] && chmod 644 /www/luci-static/argon/img/logo* 2>/dev/null
+    
+    if [ -f "/www/luci-static/bootstrap/cascade.css" ]; then
+        # 强制所有被操作过的文件恢复 644 权限，彻底终结 CSS 裸奔 Bug
+        chmod 644 /www/luci-static/bootstrap/* 2>/dev/null
+        chmod 644 "/www/luci-static/bootstrap/cascade.css" 2>/dev/null
         
-        # 恢复 Bootstrap
-        restore_file "/www/luci-static/bootstrap/logo.svg"
-        restore_file "/www/luci-static/bootstrap/logo_48.png"
-        restore_file "/www/luci-static/bootstrap/cascade.css"
-        remove_bootstrap_css
-        rm -f "/www/luci-static/bootstrap/custom_injected_logo.png" 2>/dev/null
-        
-        # 恢复 Argon
-        restore_file "/www/luci-static/argon/img/logo.png"
-        restore_file "/www/luci-static/argon/img/logo.svg"
-        restore_file "/www/luci-static/argon/img/logo-dark.svg"
+        # 删除预编译的压缩包，强制 Web 服务器重新读取带有你最新设置的 CSS
+        rm -f "/www/luci-static/bootstrap/cascade.css.gz" "/www/luci-static/bootstrap/cascade.css.br" 2>/dev/null
     fi
 }
 
