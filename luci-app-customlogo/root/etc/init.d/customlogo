@@ -3,11 +3,21 @@
 START=99
 USE_PROCD=1
 
-# 主题相关路径定义
-FAVICON_PATH="/www/favicon.ico"
-BOOTSTRAP_LOGO="/www/luci-static/bootstrap/logo.png"
-ARGON_LOGO="/www/luci-static/argon/img/logo.png"
 BACKUP_SUFFIX=".backup"
+
+backup_file() {
+    local file=$1
+    if [ -f "$file" ] && [ ! -f "${file}${BACKUP_SUFFIX}" ]; then
+        cp "$file" "${file}${BACKUP_SUFFIX}"
+    fi
+}
+
+restore_file() {
+    local file=$1
+    if [ -f "${file}${BACKUP_SUFFIX}" ]; then
+        cp "${file}${BACKUP_SUFFIX}" "$file"
+    fi
+}
 
 apply_logos() {
     local enable
@@ -19,60 +29,55 @@ apply_logos() {
     config_get favicon main favicon ""
     config_get logo main logo ""
 
-    # 创建备份函数
-    backup_file() {
-        local file=$1
-        if [ -f "$file" ] && [ ! -f "${file}${BACKUP_SUFFIX}" ]; then
-            cp "$file" "${file}${BACKUP_SUFFIX}"
-        fi
-    }
-
-    restore_file() {
-        local file=$1
-        if [ -f "${file}${BACKUP_SUFFIX}" ]; then
-            cp "${file}${BACKUP_SUFFIX}" "$file"
-        fi
-    }
-
     if [ "$enable" = "1" ]; then
+        # 修复权限：确保 Web 服务器有权读取用户上传的文件
+        chmod 644 /etc/customlogo/* 2>/dev/null
+
         # 1. 处理 Favicon
         if [ -n "$favicon" ] && [ -f "$favicon" ]; then
-            backup_file "$FAVICON_PATH"
-            cp "$favicon" "$FAVICON_PATH"
+            backup_file "/www/favicon.ico"
+            cp "$favicon" "/www/favicon.ico"
+            chmod 644 "/www/favicon.ico"
         fi
 
-        # 2. 处理 Logo (兼容主流主题)
+        # 2. 处理 Logo (暴力覆盖常见主题的所有可能引用的扩展名，防止主题强行读取原生 SVG)
         if [ -n "$logo" ] && [ -f "$logo" ]; then
             # Bootstrap 主题
             if [ -d "/www/luci-static/bootstrap" ]; then
-                backup_file "$BOOTSTRAP_LOGO"
-                cp "$logo" "$BOOTSTRAP_LOGO"
+                backup_file "/www/luci-static/bootstrap/logo.png"
+                backup_file "/www/luci-static/bootstrap/logo.svg"
+                cp "$logo" "/www/luci-static/bootstrap/logo.png" 2>/dev/null
+                cp "$logo" "/www/luci-static/bootstrap/logo.svg" 2>/dev/null
+                chmod 644 /www/luci-static/bootstrap/logo.* 2>/dev/null
             fi
-            # Argon 主题
+            # Argon 主题 (包含深色模式)
             if [ -d "/www/luci-static/argon" ]; then
-                backup_file "$ARGON_LOGO"
-                cp "$logo" "$ARGON_LOGO"
-                # Argon 有时需要覆盖 svg
-                [ -f "/www/luci-static/argon/img/logo.svg" ] && backup_file "/www/luci-static/argon/img/logo.svg" && cp "$logo" "/www/luci-static/argon/img/logo.svg"
+                backup_file "/www/luci-static/argon/img/logo.png"
+                backup_file "/www/luci-static/argon/img/logo.svg"
+                backup_file "/www/luci-static/argon/img/logo-dark.svg"
+                cp "$logo" "/www/luci-static/argon/img/logo.png" 2>/dev/null
+                cp "$logo" "/www/luci-static/argon/img/logo.svg" 2>/dev/null
+                cp "$logo" "/www/luci-static/argon/img/logo-dark.svg" 2>/dev/null
+                chmod 644 /www/luci-static/argon/img/logo* 2>/dev/null
             fi
         fi
     else
-        # 如果禁用，则恢复原生文件
-        restore_file "$FAVICON_PATH"
-        restore_file "$BOOTSTRAP_LOGO"
-        restore_file "$ARGON_LOGO"
+        # 禁用时恢复所有原生文件
+        restore_file "/www/favicon.ico"
+        restore_file "/www/luci-static/bootstrap/logo.png"
+        restore_file "/www/luci-static/bootstrap/logo.svg"
+        restore_file "/www/luci-static/argon/img/logo.png"
         restore_file "/www/luci-static/argon/img/logo.svg"
+        restore_file "/www/luci-static/argon/img/logo-dark.svg"
     fi
 }
 
 start_service() {
-    # 确保上传目录存在
     mkdir -p /etc/customlogo
     apply_logos
 }
 
 service_triggers() {
-    # 当界面的 customlogo uci 被保存时，触发此脚本
     procd_add_reload_trigger "customlogo"
 }
 
