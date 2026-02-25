@@ -46,6 +46,11 @@ jobs:
       - name: Update and install feeds
         working-directory: openwrt-sdk
         run: |
+          # 将不稳定的 git.openwrt.org 替换为稳定的 github.com 镜像源
+          sed -i 's/git.openwrt.org\/feed/github.com\/openwrt/g' feeds.conf.default
+          sed -i 's/git.openwrt.org\/project/github.com\/openwrt/g' feeds.conf.default
+          
+          # 更新并安装
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
