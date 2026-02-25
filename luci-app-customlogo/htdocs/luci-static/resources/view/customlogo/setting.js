@@ -2,7 +2,7 @@
 'require view';
 'require form';
 'require uci';
-'require fs'; // 引入系统文件读取模块
+'require fs';
 
 return view.extend({
 	load: function() {
@@ -22,20 +22,25 @@ return view.extend({
 		o = s.option(form.Flag, 'enable', _('Enable Custom Logo'));
 		o.rmempty = false;
 
-		// 核心逻辑：定义一个异步文件存活校验器
-		var validate_file_exists = function(section_id, value) {
-			if (!value) return true; // 如果没填，让 optional 和 rmempty 规则去处理
+		// 增强版：自动纠错的校验器
+		var validate_and_autoclear = function(section_id, value) {
+			if (!value) return true; 
 			
-			// 调用 ubus 接口查询真实的文件系统
+			var self = this; // 保存当前组件的上下文
+			
 			return fs.stat(value).then(function(stat) {
 				if (stat && stat.type === 'file') {
-					return true; // 文件存在，校验通过
+					return true; // 文件存在，完美
 				}
-				// 查不到文件或不是普通文件，阻断保存并抛出错误提示
-				return _('File does not exist. Please re-upload or clear the selection.');
+				// 查不到文件（遇到幽灵路径），直接强行清空 UI 输入框的值
+				var uiElem = self.getUIElement(section_id);
+				if (uiElem) uiElem.setValue('');
+				return true; // 清空后直接放行，不弹红字报错
 			}).catch(function() {
-				// 发生异常（如文件不存在引发的 404 错误）
-				return _('File does not exist. Please re-upload or clear the selection.');
+				// 发生异常（文件不存在），同样强行清空
+				var uiElem = self.getUIElement(section_id);
+				if (uiElem) uiElem.setValue('');
+				return true; 
 			});
 		};
 
@@ -44,14 +49,14 @@ return view.extend({
 		o.optional = true;
 		o.rmempty = true;
 		o.depends('enable', '1');
-		o.validate = validate_file_exists; // 绑定实时校验
+		o.validate = validate_and_autoclear; // 绑定自动清空校验
 
 		o = s.option(form.FileUpload, 'logo', _('Navigation Bar Logo'), _('The theme logo displayed in the top left corner. Recommended height: ~40px. PNG or SVG files are supported.'));
 		o.root_directory = '/etc/customlogo';
 		o.optional = true;
 		o.rmempty = true;
 		o.depends('enable', '1');
-		o.validate = validate_file_exists; // 绑定实时校验
+		o.validate = validate_and_autoclear; // 绑定自动清空校验
 
 		return m.render();
 	}
