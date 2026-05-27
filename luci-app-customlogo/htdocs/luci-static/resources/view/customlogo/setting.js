@@ -4,6 +4,58 @@
 'require uci';
 'require fs';
 
+var UPLOAD_DIR = '/etc/customlogo/';
+var MAX_FAVICON_SIZE = 512 * 1024;
+var MAX_LOGO_SIZE = 1024 * 1024;
+
+function getBasename(path) {
+	var parts = String(path || '').split('/');
+	return parts[parts.length - 1] || '';
+}
+
+function getExtension(path) {
+	var name = getBasename(path);
+	var pos = name.lastIndexOf('.');
+	return pos >= 0 ? name.substr(pos + 1).toLowerCase() : '';
+}
+
+function validateUpload(allowedExts, maxSize) {
+	return function(section_id, value) {
+		var name, ext;
+
+		if (!value)
+			return true;
+
+		value = String(value);
+		name = getBasename(value);
+		ext = getExtension(value);
+
+		if (value.indexOf(UPLOAD_DIR) !== 0)
+			return _('Only files under /etc/customlogo are allowed. Please upload the file from this page.');
+
+		if (value.indexOf('/../') >= 0 || value.match(/\/\.\.?$/))
+			return _('Invalid file path.');
+
+		if (!/^[A-Za-z0-9._-]+$/.test(name))
+			return _('File name can only contain letters, numbers, dots, underscores and hyphens.');
+
+		if (allowedExts.indexOf(ext) < 0)
+			return _('Unsupported file type. Supported types: %s.').format(allowedExts.join(', '));
+
+		return fs.stat(value).then(function(stat) {
+			if (!stat || stat.type !== 'file')
+				return _('The selected file does not exist. Please upload it again.');
+
+			if (stat.size && stat.size > maxSize)
+				return _('The selected file is too large. Maximum size: %s KB.').format(Math.floor(maxSize / 1024));
+
+			return true;
+		}).catch(function() {
+			return _('The selected file does not exist. Please upload it again.');
+		});
+	};
+}
+
 return view.extend({
 	load: function() {
 		return Promise.all([
@@ -15,48 +67,30 @@ return view.extend({
 		var m, s, o;
 
 		m = new form.Map('customlogo', _('Custom Logo'),
-			_('Upload and replace the OpenWrt Web UI Favicon and top-left Logo here. PNG and SVG formats are supported.'));
+			_('Upload and replace the OpenWrt Web UI favicon and navigation bar logo. Files are stored under /etc/customlogo.'));
 
 		s = m.section(form.NamedSection, 'main', 'customlogo', _('Basic Settings'));
+		s.addremove = false;
+		s.anonymous = true;
 
 		o = s.option(form.Flag, 'enable', _('Enable Custom Logo'));
 		o.rmempty = false;
 
-		// 增强版：自动纠错的校验器
-		var validate_and_autoclear = function(section_id, value) {
-			if (!value) return true; 
-			
-			var self = this; // 保存当前组件的上下文
-			
-			return fs.stat(value).then(function(stat) {
-				if (stat && stat.type === 'file') {
-					return true; // 文件存在，完美
-				}
-				// 查不到文件（遇到幽灵路径），直接强行清空 UI 输入框的值
-				var uiElem = self.getUIElement(section_id);
-				if (uiElem) uiElem.setValue('');
-				return true; // 清空后直接放行，不弹红字报错
-			}).catch(function() {
-				// 发生异常（文件不存在），同样强行清空
-				var uiElem = self.getUIElement(section_id);
-				if (uiElem) uiElem.setValue('');
-				return true; 
-			});
-		};
-
-		o = s.option(form.FileUpload, 'favicon', _('Web Icon (Favicon)'), _('Recommended size: 32x32 or 64x64. PNG, ICO, or SVG files are supported.'));
+		o = s.option(form.FileUpload, 'favicon', _('Web Icon (Favicon)'),
+			_('Allowed types: ICO, PNG, SVG. Maximum size: 512 KB. For the most compatible /favicon.ico replacement, use ICO.'));
 		o.root_directory = '/etc/customlogo';
 		o.optional = true;
 		o.rmempty = true;
 		o.depends('enable', '1');
-		o.validate = validate_and_autoclear; // 绑定自动清空校验
+		o.validate = validateUpload(['ico', 'png', 'svg'], MAX_FAVICON_SIZE);
 
-		o = s.option(form.FileUpload, 'logo', _('Navigation Bar Logo'), _('The theme logo displayed in the top left corner. Recommended height: ~40px. PNG or SVG files are supported.'));
+		o = s.option(form.FileUpload, 'logo', _('Navigation Bar Logo'),
+			_('Allowed types: PNG, SVG. Maximum size: 1024 KB. SVG is recommended for sharp display.'));
 		o.root_directory = '/etc/customlogo';
 		o.optional = true;
 		o.rmempty = true;
 		o.depends('enable', '1');
-		o.validate = validate_and_autoclear; // 绑定自动清空校验
+		o.validate = validateUpload(['png', 'svg'], MAX_LOGO_SIZE);
 
 		return m.render();
 	}
