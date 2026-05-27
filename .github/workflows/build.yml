@@ -22,8 +22,8 @@ jobs:
 
       - name: Download and extract OpenWrt 25.12 SDK
         run: |
-          # 核心修改 1：目标版本更新为 25.12.2 最新正式版
-          OPENWRT_VERSION="25.12.2"
+          # 核心修改 1：目标版本更新为 25.12.4 最新正式版
+          OPENWRT_VERSION="25.12.4"
           
           # 自动去官网抓取最新的文件名校验表
           wget "https://downloads.openwrt.org/releases/${OPENWRT_VERSION}/targets/x86/64/sha256sums"
