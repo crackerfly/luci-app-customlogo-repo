@@ -214,20 +214,22 @@ header .brand {
     width: auto !important;
     height: 40px !important;
     font-size: 20px !important;
+    line-height: 1 !important;
     color: #fff !important;
     background-image: none !important;
 }
 header .brand::before {
     content: "" !important;
     display: inline-block !important;
-    width: 120px !important;
-    max-width: 160px !important;
+    width: 44px !important;
+    min-width: 44px !important;
+    max-width: 44px !important;
     height: 28px !important;
-    flex: 0 0 auto !important;
-    margin-right: 8px !important;
+    flex: 0 0 44px !important;
+    margin-right: 6px !important;
     background-image: url('${injected_file}?v=${ts}') !important;
     background-repeat: no-repeat !important;
-    background-position: center left !important;
+    background-position: center center !important;
     background-size: contain !important;
 }
 /* CUSTOM_LOGO_END */
