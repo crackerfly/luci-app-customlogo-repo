@@ -2,37 +2,60 @@ name: Build OpenWrt Package
 
 on:
   push:
-    branches: [ "main", "master" ]
-    tags: [ "v*" ]
+    branches:
+      - main
+      - master
+    tags:
+      - "v*"
   pull_request:
-    branches: [ "main", "master" ]
+    branches:
+      - main
+      - master
   workflow_dispatch:
 
 permissions:
   contents: read
 
+env:
+  PACKAGE_NAME: luci-app-customlogo
+
+  # GitHub Actions Node.js 20 deprecation compatibility.
+  # Force JavaScript actions to run with Node.js 24 now.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   build:
-    name: Build OpenWrt ${{ matrix.openwrt_version }} x86/64
+    name: Build OpenWrt ${{ matrix.openwrt_version }} ${{ matrix.target }}
     runs-on: ubuntu-24.04
 
     strategy:
       fail-fast: false
       matrix:
-        openwrt_version:
-          - "24.10.6"
-          - "25.12.4"
+        include:
+          - openwrt_version: "24.10.6"
+            target: "x86/64"
+            target_name: "x86-64"
 
-    env:
-      TARGET: x86/64
-      PACKAGE_NAME: luci-app-customlogo
+          - openwrt_version: "25.12.4"
+            target: "x86/64"
+            target_name: "x86-64"
+
+          - openwrt_version: "24.10.6"
+            target: "mediatek/mt7622"
+            target_name: "mediatek-mt7622"
+
+          - openwrt_version: "25.12.4"
+            target: "mediatek/mt7622"
+            target_name: "mediatek-mt7622"
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install build dependencies
         run: |
+          set -eux
+
           sudo apt-get update
           sudo apt-get install -y \
             build-essential \
@@ -60,16 +83,21 @@ jobs:
 
       - name: Download and verify OpenWrt SDK
         run: |
-          set -eu
+          set -eux
 
           OPENWRT_VERSION="${{ matrix.openwrt_version }}"
+          TARGET="${{ matrix.target }}"
           BASE_URL="https://downloads.openwrt.org/releases/${OPENWRT_VERSION}/targets/${TARGET}"
+
+          echo "OpenWrt version: ${OPENWRT_VERSION}"
+          echo "Target: ${TARGET}"
+          echo "SDK base URL: ${BASE_URL}"
 
           wget -q "${BASE_URL}/sha256sums" -O sha256sums
 
           SDK_FILE="$(awk '/openwrt-sdk/ { gsub(/^\*/, "", $2); print $2; exit }' sha256sums)"
 
-          if [ -z "$SDK_FILE" ]; then
+          if [ -z "${SDK_FILE}" ]; then
             echo "OpenWrt SDK file was not found in sha256sums"
             exit 1
           fi
@@ -78,46 +106,62 @@ jobs:
 
           wget -q "${BASE_URL}/${SDK_FILE}" -O "${SDK_FILE}"
 
-          awk -v f="$SDK_FILE" '$2 == f || $2 == "*" f { print; found=1 } END { exit found ? 0 : 1 }' sha256sums > sha256sums.sdk
+          awk -v f="${SDK_FILE}" '
+            $2 == f || $2 == "*" f {
+              print
+              found=1
+            }
+            END {
+              exit found ? 0 : 1
+            }
+          ' sha256sums > sha256sums.sdk
+
           sha256sum -c sha256sums.sdk
 
-          SDK_DIR="$(tar -tf "$SDK_FILE" | head -n 1 | cut -d/ -f1)"
+          SDK_DIR="$(tar -tf "${SDK_FILE}" | head -n 1 | cut -d/ -f1)"
 
-          if [ -z "$SDK_DIR" ]; then
+          if [ -z "${SDK_DIR}" ]; then
             echo "Unable to detect SDK directory name"
             exit 1
           fi
 
-          tar -xf "$SDK_FILE"
-          mv "$SDK_DIR" openwrt-sdk
+          tar -xf "${SDK_FILE}"
+          mv "${SDK_DIR}" openwrt-sdk
 
       - name: Cache OpenWrt downloads
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: openwrt-sdk/dl
-          key: openwrt-dl-${{ runner.os }}-${{ matrix.openwrt_version }}-${{ hashFiles('luci-app-customlogo/**') }}
+          key: openwrt-dl-${{ runner.os }}-${{ matrix.openwrt_version }}-${{ matrix.target_name }}-${{ hashFiles('luci-app-customlogo/**') }}
           restore-keys: |
+            openwrt-dl-${{ runner.os }}-${{ matrix.openwrt_version }}-${{ matrix.target_name }}-
             openwrt-dl-${{ runner.os }}-${{ matrix.openwrt_version }}-
 
       - name: Copy package source into SDK
         run: |
+          set -eux
+
           cp -a luci-app-customlogo openwrt-sdk/package/
 
       - name: Update and install feeds
         working-directory: openwrt-sdk
         run: |
+          set -eux
+
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
       - name: Compile package
         working-directory: openwrt-sdk
         run: |
+          set -eux
+
           make defconfig
           make package/${PACKAGE_NAME}/compile V=s -j"$(nproc)"
 
       - name: Prepare artifact
         run: |
-          set -eu
+          set -eux
 
           mkdir -p output_pkg
 
@@ -136,9 +180,12 @@ jobs:
             sha256sum *.*pk > SHA256SUMS
           )
 
+          echo "Generated packages:"
+          find output_pkg -type f -maxdepth 1 -print
+
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
-          name: luci-app-customlogo-${{ matrix.openwrt_version }}-x86-64
+          name: luci-app-customlogo-${{ matrix.openwrt_version }}-${{ matrix.target_name }}
           path: output_pkg/*
           if-no-files-found: error
