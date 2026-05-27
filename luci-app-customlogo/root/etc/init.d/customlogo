@@ -1,88 +1,206 @@
 #!/bin/sh /etc/rc.common
 
 START=99
+STOP=10
 USE_PROCD=1
 
+LOG_TAG="customlogo"
 BACKUP_SUFFIX=".backup"
+UPLOAD_DIR="/etc/customlogo"
+BOOTSTRAP_DIR="/www/luci-static/bootstrap"
+ARGON_DIR="/www/luci-static/argon"
+BOOTSTRAP_CSS="${BOOTSTRAP_DIR}/cascade.css"
+
+log_info() {
+	logger -t "$LOG_TAG" "$*" 2>/dev/null || true
+}
+
+ensure_upload_dir() {
+	mkdir -p "$UPLOAD_DIR" 2>/dev/null || true
+	chmod 755 "$UPLOAD_DIR" 2>/dev/null || true
+}
 
 backup_file() {
-    local file=$1
-    if [ -f "$file" ]; then
-        if [ ! -f "${file}${BACKUP_SUFFIX}" ]; then
-            cp -f "$file" "${file}${BACKUP_SUFFIX}" 2>/dev/null || true
-        fi
-    fi
+	local file="$1"
+
+	[ -f "$file" ] || return 0
+	[ -f "${file}${BACKUP_SUFFIX}" ] && return 0
+
+	cp -f "$file" "${file}${BACKUP_SUFFIX}" 2>/dev/null || true
+	chmod 644 "${file}${BACKUP_SUFFIX}" 2>/dev/null || true
 }
 
 restore_file() {
-    local file=$1
-    if [ -f "${file}${BACKUP_SUFFIX}" ]; then
-        cp -f "${file}${BACKUP_SUFFIX}" "$file" 2>/dev/null || true
-    fi
+	local file="$1"
+
+	[ -f "${file}${BACKUP_SUFFIX}" ] || return 0
+
+	cp -f "${file}${BACKUP_SUFFIX}" "$file" 2>/dev/null || true
+	chmod 644 "$file" 2>/dev/null || true
 }
 
-apply_logos() {
-    local enable favicon logo ext injected_file css_file
+clean_bootstrap_injection() {
+	if [ -f "$BOOTSTRAP_CSS" ]; then
+		sed -i '/\/\* CUSTOM_LOGO_START \*\//,/\/\* CUSTOM_LOGO_END \*\//d' "$BOOTSTRAP_CSS" 2>/dev/null || true
+		rm -f "${BOOTSTRAP_CSS}.gz" "${BOOTSTRAP_CSS}.br" 2>/dev/null || true
+	fi
 
-    config_load customlogo
-    config_get enable main enable "0"
-    config_get favicon main favicon ""
-    config_get logo main logo ""
+	rm -f "${BOOTSTRAP_DIR}"/custom_injected_logo.* 2>/dev/null || true
+}
 
-    # 1. 绝对安全的全局还原 (清除所有主题的修改痕迹)
-    restore_file "/www/favicon.ico"
-    restore_file "/www/luci-static/bootstrap/logo.svg"
-    restore_file "/www/luci-static/bootstrap/logo_48.png"
-    restore_file "/www/luci-static/bootstrap/cascade.css"
-    restore_file "/www/luci-static/argon/img/logo.png"
-    restore_file "/www/luci-static/argon/img/logo.svg"
-    restore_file "/www/luci-static/argon/img/logo-dark.svg"
+restore_all() {
+	restore_file "/www/favicon.ico"
 
-    css_file="/www/luci-static/bootstrap/cascade.css"
-    if [ -f "$css_file" ]; then
-        sed -i '/\/\* CUSTOM_LOGO_START \*\//,/\/\* CUSTOM_LOGO_END \*\//d' "$css_file" 2>/dev/null || true
-    fi
-    rm -f /www/luci-static/bootstrap/custom_injected_logo.* 2>/dev/null || true
+	restore_file "${BOOTSTRAP_DIR}/logo.svg"
+	restore_file "${BOOTSTRAP_DIR}/logo_48.png"
+	restore_file "$BOOTSTRAP_CSS"
 
-    # 2. 核心逻辑执行
-    if [ "$enable" = "1" ]; then
-        
-        if [ -d "/etc/customlogo" ]; then
-            chmod 644 /etc/customlogo/* 2>/dev/null || true
-        fi
+	restore_file "${ARGON_DIR}/img/logo.png"
+	restore_file "${ARGON_DIR}/img/logo.svg"
+	restore_file "${ARGON_DIR}/img/logo-dark.svg"
 
-        # ==========================================
-        # 【完全解耦】专门处理 Favicon
-        # ==========================================
-        if [ -n "$favicon" ] && [ -f "$favicon" ]; then
-            backup_file "/www/favicon.ico"
-            cp -f "$favicon" "/www/favicon.ico" 2>/dev/null || true
-            
-            # 【杀手锏】截胡 Bootstrap 硬编码的 Favicon 路径
-            if [ -d "/www/luci-static/bootstrap" ]; then
-                backup_file "/www/luci-static/bootstrap/logo.svg"
-                backup_file "/www/luci-static/bootstrap/logo_48.png"
-                cp -f "$favicon" "/www/luci-static/bootstrap/logo.svg" 2>/dev/null || true
-                cp -f "$favicon" "/www/luci-static/bootstrap/logo_48.png" 2>/dev/null || true
-            fi
-        fi
+	clean_bootstrap_injection
 
-        # ==========================================
-        # 【完全解耦】专门处理 Navigation Bar Logo
-        # ==========================================
-        if [ -n "$logo" ] && [ -f "$logo" ]; then
-            ext="${logo##*.}"
-            
-            # Bootstrap 主题
-            if [ -d "/www/luci-static/bootstrap" ]; then
-                # 【注意】我们不再替换 logo.svg 了，而是专属生成注入文件
-                backup_file "/www/luci-static/bootstrap/cascade.css"
-                
-                injected_file="custom_injected_logo.$ext"
-                cp -f "$logo" "/www/luci-static/bootstrap/$injected_file" 2>/dev/null || true
-                
-                local ts=$(date +%s)
-                cat >> "$css_file" <<EOF
+	[ -d "$BOOTSTRAP_DIR" ] && find "$BOOTSTRAP_DIR" -maxdepth 1 -type f -exec chmod 644 {} \; 2>/dev/null || true
+	[ -d "${ARGON_DIR}/img" ] && chmod 644 "${ARGON_DIR}"/img/logo* 2>/dev/null || true
+}
+
+get_ext() {
+	local file="$1"
+	printf '%s' "${file##*.}" | tr 'A-Z' 'a-z'
+}
+
+file_size() {
+	local file="$1"
+	local size
+
+	size="$(wc -c < "$file" 2>/dev/null)"
+	case "$size" in
+		''|*[!0-9]*) echo 0 ;;
+		*) echo "$size" ;;
+	esac
+}
+
+valid_upload_file() {
+	local file="$1"
+	local kind="$2"
+	local name ext size limit allowed
+
+	[ -n "$file" ] && [ -f "$file" ] || return 1
+
+	case "$file" in
+		"$UPLOAD_DIR"/*) ;;
+		*)
+			log_info "reject unsafe path: $file"
+			return 1
+		;;
+	esac
+
+	case "$file" in
+		*'/../'*|*'/..'|'../'*|'..')
+			log_info "reject path containing '..': $file"
+			return 1
+		;;
+	esac
+
+	name="${file##*/}"
+	[ -n "$name" ] || return 1
+
+	case "$name" in
+		*[!A-Za-z0-9._-]*)
+			log_info "reject unsafe filename: $name"
+			return 1
+		;;
+	esac
+
+	ext="$(get_ext "$file")"
+
+	case "$kind" in
+		favicon)
+			allowed="ico png svg"
+			limit=$((512 * 1024))
+		;;
+		logo)
+			allowed="png svg"
+			limit=$((1024 * 1024))
+		;;
+		*)
+			allowed="png svg ico"
+			limit=$((1024 * 1024))
+		;;
+	esac
+
+	case " $allowed " in
+		*" $ext "*) ;;
+		*)
+			log_info "reject unsupported $kind extension: $ext"
+			return 1
+		;;
+	esac
+
+	size="$(file_size "$file")"
+	if [ "$size" -gt "$limit" ]; then
+		log_info "reject oversized $kind file: $name (${size} bytes)"
+		return 1
+	fi
+
+	return 0
+}
+
+copy_file() {
+	local src="$1"
+	local dst="$2"
+
+	[ -f "$src" ] || return 1
+	cp -f "$src" "$dst" 2>/dev/null || return 1
+	chmod 644 "$dst" 2>/dev/null || true
+	return 0
+}
+
+apply_favicon() {
+	local favicon="$1"
+	local ext
+
+	valid_upload_file "$favicon" "favicon" || return 0
+	ext="$(get_ext "$favicon")"
+
+	case "$ext" in
+		ico)
+			backup_file "/www/favicon.ico"
+			copy_file "$favicon" "/www/favicon.ico"
+		;;
+		png)
+			if [ -d "$BOOTSTRAP_DIR" ]; then
+				backup_file "${BOOTSTRAP_DIR}/logo_48.png"
+				copy_file "$favicon" "${BOOTSTRAP_DIR}/logo_48.png"
+			fi
+		;;
+		svg)
+			if [ -d "$BOOTSTRAP_DIR" ]; then
+				backup_file "${BOOTSTRAP_DIR}/logo.svg"
+				copy_file "$favicon" "${BOOTSTRAP_DIR}/logo.svg"
+			fi
+		;;
+	esac
+}
+
+apply_bootstrap_logo() {
+	local logo="$1"
+	local ext injected_file ts
+
+	[ -d "$BOOTSTRAP_DIR" ] || return 0
+	[ -f "$BOOTSTRAP_CSS" ] || return 0
+	valid_upload_file "$logo" "logo" || return 0
+
+	ext="$(get_ext "$logo")"
+	injected_file="custom_injected_logo.${ext}"
+	ts="$(date +%s 2>/dev/null || echo 0)"
+
+	backup_file "$BOOTSTRAP_CSS"
+	clean_bootstrap_injection
+	copy_file "$logo" "${BOOTSTRAP_DIR}/${injected_file}" || return 0
+
+	cat >> "$BOOTSTRAP_CSS" <<EOF
 /* CUSTOM_LOGO_START */
 header .brand {
     display: flex !important;
@@ -100,50 +218,83 @@ header .brand {
     background-image: none !important;
 }
 header .brand::before {
-    content: url('$injected_file?v=$ts') !important;
-    display: block !important;
+    content: "" !important;
+    display: inline-block !important;
+    width: 120px !important;
+    max-width: 160px !important;
     height: 28px !important;
-    width: auto !important;
-    object-fit: contain !important;
+    flex: 0 0 auto !important;
     margin-right: 8px !important;
+    background-image: url('${injected_file}?v=${ts}') !important;
+    background-repeat: no-repeat !important;
+    background-position: center left !important;
+    background-size: contain !important;
 }
 /* CUSTOM_LOGO_END */
 EOF
-            fi
-            
-            # Argon 主题 (它本身 Navbar 就是图片，保持物理替换)
-            if [ -d "/www/luci-static/argon" ]; then
-                backup_file "/www/luci-static/argon/img/logo.png"
-                backup_file "/www/luci-static/argon/img/logo.svg"
-                backup_file "/www/luci-static/argon/img/logo-dark.svg"
-                
-                cp -f "$logo" "/www/luci-static/argon/img/logo.png" 2>/dev/null || true
-                cp -f "$logo" "/www/luci-static/argon/img/logo.svg" 2>/dev/null || true
-                cp -f "$logo" "/www/luci-static/argon/img/logo-dark.svg" 2>/dev/null || true
-            fi
-        fi
-    fi
 
-    # 3. 最终的权限兜底与压缩缓存销毁
-    [ -f "/www/favicon.ico" ] && chmod 644 "/www/favicon.ico" 2>/dev/null || true
-    [ -d "/www/luci-static/argon" ] && chmod 644 /www/luci-static/argon/img/logo* 2>/dev/null || true
-    
-    if [ -d "/www/luci-static/bootstrap" ]; then
-        find /www/luci-static/bootstrap/ -maxdepth 1 -type f -exec chmod 644 {} \; 2>/dev/null || true
-        rm -f "/www/luci-static/bootstrap/cascade.css.gz" 2>/dev/null || true
-        rm -f "/www/luci-static/bootstrap/cascade.css.br" 2>/dev/null || true
-    fi
+	rm -f "${BOOTSTRAP_CSS}.gz" "${BOOTSTRAP_CSS}.br" 2>/dev/null || true
+	chmod 644 "$BOOTSTRAP_CSS" 2>/dev/null || true
+}
+
+apply_argon_logo() {
+	local logo="$1"
+	local ext
+
+	[ -d "${ARGON_DIR}/img" ] || return 0
+	valid_upload_file "$logo" "logo" || return 0
+
+	ext="$(get_ext "$logo")"
+
+	case "$ext" in
+		png)
+			backup_file "${ARGON_DIR}/img/logo.png"
+			copy_file "$logo" "${ARGON_DIR}/img/logo.png"
+		;;
+		svg)
+			backup_file "${ARGON_DIR}/img/logo.svg"
+			backup_file "${ARGON_DIR}/img/logo-dark.svg"
+			copy_file "$logo" "${ARGON_DIR}/img/logo.svg"
+			copy_file "$logo" "${ARGON_DIR}/img/logo-dark.svg"
+		;;
+	esac
+}
+
+apply_logos() {
+	local enable favicon logo
+
+	ensure_upload_dir
+
+	config_load customlogo
+	config_get enable main enable "0"
+	config_get favicon main favicon ""
+	config_get logo main logo ""
+
+	restore_all
+
+	[ "$enable" = "1" ] || return 0
+
+	if [ -d "$UPLOAD_DIR" ]; then
+		find "$UPLOAD_DIR" -maxdepth 1 -type f -exec chmod 644 {} \; 2>/dev/null || true
+	fi
+
+	apply_favicon "$favicon"
+	apply_bootstrap_logo "$logo"
+	apply_argon_logo "$logo"
 }
 
 start_service() {
-    mkdir -p /etc/customlogo
-    apply_logos
+	apply_logos
 }
 
-service_triggers() {
-    procd_add_reload_trigger "customlogo"
+stop_service() {
+	restore_all
 }
 
 reload_service() {
-    apply_logos
+	apply_logos
+}
+
+service_triggers() {
+	procd_add_reload_trigger "customlogo"
 }
