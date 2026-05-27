@@ -1,75 +1,144 @@
-name: Build OpenWrt 25.12 Package
+name: Build OpenWrt Package
 
 on:
   push:
     branches: [ "main", "master" ]
+    tags: [ "v*" ]
+  pull_request:
+    branches: [ "main", "master" ]
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   build:
-    name: Build luci-app-customlogo
-    runs-on: ubuntu-latest
+    name: Build OpenWrt ${{ matrix.openwrt_version }} x86/64
+    runs-on: ubuntu-24.04
+
+    strategy:
+      fail-fast: false
+      matrix:
+        openwrt_version:
+          - "24.10.6"
+          - "25.12.4"
+
+    env:
+      TARGET: x86/64
+      PACKAGE_NAME: luci-app-customlogo
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install dependencies
+      - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential clang flex bison g++ gawk gcc-multilib g++-multilib \
-          gettext git libncurses5-dev libssl-dev python3-setuptools rsync swig unzip zlib1g-dev file wget zstd
+          sudo apt-get install -y \
+            build-essential \
+            clang \
+            flex \
+            bison \
+            g++ \
+            gawk \
+            gcc-multilib \
+            g++-multilib \
+            gettext \
+            git \
+            libncurses-dev \
+            libssl-dev \
+            python3 \
+            python3-setuptools \
+            rsync \
+            swig \
+            unzip \
+            zlib1g-dev \
+            file \
+            wget \
+            xz-utils \
+            zstd
 
-      - name: Download and extract OpenWrt 25.12 SDK
+      - name: Download and verify OpenWrt SDK
         run: |
-          # 核心修改 1：目标版本更新为 25.12.4 最新正式版
-          OPENWRT_VERSION="25.12.4"
-          
-          # 自动去官网抓取最新的文件名校验表
-          wget "https://downloads.openwrt.org/releases/${OPENWRT_VERSION}/targets/x86/64/sha256sums"
-          SDK_FILE=$(grep 'openwrt-sdk' sha256sums | awk '{print $2}' | sed 's/^\*//')
-          
-          echo "动态匹配到的 SDK 文件: $SDK_FILE"
-          
-          # 下载并解压 (全面兼容 .zst 或 .xz)
-          wget "https://downloads.openwrt.org/releases/${OPENWRT_VERSION}/targets/x86/64/${SDK_FILE}"
+          set -eu
+
+          OPENWRT_VERSION="${{ matrix.openwrt_version }}"
+          BASE_URL="https://downloads.openwrt.org/releases/${OPENWRT_VERSION}/targets/${TARGET}"
+
+          wget -q "${BASE_URL}/sha256sums" -O sha256sums
+
+          SDK_FILE="$(awk '/openwrt-sdk/ { gsub(/^\*/, "", $2); print $2; exit }' sha256sums)"
+
+          if [ -z "$SDK_FILE" ]; then
+            echo "OpenWrt SDK file was not found in sha256sums"
+            exit 1
+          fi
+
+          echo "Matched SDK file: ${SDK_FILE}"
+
+          wget -q "${BASE_URL}/${SDK_FILE}" -O "${SDK_FILE}"
+
+          awk -v f="$SDK_FILE" '$2 == f || $2 == "*" f { print; found=1 } END { exit found ? 0 : 1 }' sha256sums > sha256sums.sdk
+          sha256sum -c sha256sums.sdk
+
+          SDK_DIR="$(tar -tf "$SDK_FILE" | head -n 1 | cut -d/ -f1)"
+
+          if [ -z "$SDK_DIR" ]; then
+            echo "Unable to detect SDK directory name"
+            exit 1
+          fi
+
           tar -xf "$SDK_FILE"
-          
-          # 获取解压后的文件夹名并重命名为 openwrt-sdk
-          DIR_NAME=$(echo "$SDK_FILE" | sed -e 's/.tar.zst//' -e 's/.tar.xz//')
-          mv "$DIR_NAME" openwrt-sdk
-          
-      - name: Copy source code to SDK
+          mv "$SDK_DIR" openwrt-sdk
+
+      - name: Cache OpenWrt downloads
+        uses: actions/cache@v4
+        with:
+          path: openwrt-sdk/dl
+          key: openwrt-dl-${{ runner.os }}-${{ matrix.openwrt_version }}-${{ hashFiles('luci-app-customlogo/**') }}
+          restore-keys: |
+            openwrt-dl-${{ runner.os }}-${{ matrix.openwrt_version }}-
+
+      - name: Copy package source into SDK
         run: |
-          cp -r luci-app-customlogo openwrt-sdk/package/
-          
+          cp -a luci-app-customlogo openwrt-sdk/package/
+
       - name: Update and install feeds
         working-directory: openwrt-sdk
         run: |
-          # 替换所有的官方源为 GitHub 镜像源 (彻底覆盖 base, feed, project)
-          sed -i 's/git.openwrt.org\/openwrt/github.com\/openwrt/g' feeds.conf.default
-          sed -i 's/git.openwrt.org\/feed/github.com\/openwrt/g' feeds.conf.default
-          sed -i 's/git.openwrt.org\/project/github.com\/openwrt/g' feeds.conf.default
-          
-          # 更新并安装
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
-      - name: Compile the Package
+      - name: Compile package
         working-directory: openwrt-sdk
         run: |
           make defconfig
-          make package/luci-app-customlogo/compile V=s
+          make package/${PACKAGE_NAME}/compile V=s -j"$(nproc)"
 
-      - name: Prepare Artifact
+      - name: Prepare artifact
         run: |
-          mkdir -p output_pkg
-          # 核心修改 2：25.12 改用 apk，这里用 *.*pk 魔法通配符，同时兼容提取 ipk 和 apk
-          find openwrt-sdk/bin/packages/ -name "luci-app-customlogo*.*pk" -exec cp {} output_pkg/ \;
+          set -eu
 
-      - name: Upload Artifact
+          mkdir -p output_pkg
+
+          find openwrt-sdk/bin/packages/ -type f \( \
+            -name "${PACKAGE_NAME}*.ipk" -o \
+            -name "${PACKAGE_NAME}*.apk" \
+          \) -exec cp {} output_pkg/ \;
+
+          if ! find output_pkg -type f \( -name "*.ipk" -o -name "*.apk" \) | grep -q .; then
+            echo "No package was built"
+            exit 1
+          fi
+
+          (
+            cd output_pkg
+            sha256sum *.*pk > SHA256SUMS
+          )
+
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          # 修改名字以符合 apk 时代
-          name: luci-app-customlogo-pkg
-          path: output_pkg/*.*pk
+          name: luci-app-customlogo-${{ matrix.openwrt_version }}-x86-64
+          path: output_pkg/*
+          if-no-files-found: error
