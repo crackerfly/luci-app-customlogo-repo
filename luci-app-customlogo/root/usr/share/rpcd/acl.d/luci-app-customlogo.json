@@ -4,13 +4,15 @@
 		"read": {
 			"uci": [ "customlogo" ],
 			"file": {
+				"/etc/customlogo": [ "list", "read" ],
 				"/etc/customlogo/*": [ "read" ]
 			}
 		},
 		"write": {
 			"uci": [ "customlogo" ],
 			"file": {
-				"/etc/customlogo/*": [ "write", "delete" ]
+				"/etc/customlogo": [ "list", "write" ],
+				"/etc/customlogo/*": [ "read", "write", "delete" ]
 			}
 		}
 	}
